@@ -8,6 +8,7 @@ use std::fs::File;
 use std::path::Path;
 use std::io::Read;
 use std::time::{Duration, Instant};
+use std::vec::Vec;
 
 use hyper::{Client, Uri};
 use std::str::FromStr;
@@ -28,41 +29,50 @@ fn create_client(core: &Core) -> Client<HttpsConnector> {
          .build(&core.handle())
 }
 
-pub fn website_bench() {
-	let mut file = match File::open(Path::new("./examples/sites.txt")) {
-        Err(_) => return,   //fail silently TODO probably shouldn't...
-        Ok(file) => file,
-    };
+// TODO use #[bench]?
 
-   
-    // can create a custom root-ca store (defaults to webpki)
+pub fn website_bench(site: &str) -> f64 {
 
-    let mut sites = String::new();
-    file.read_to_string(&mut sites).unwrap();
-
+	let mut core = tokio_core::reactor::Core::new().unwrap();
+	let client = create_client(&core);
     let start = Instant::now();
-    let mut core = tokio_core::reactor::Core::new().unwrap();
-    let client = create_client(&core);
-    println!("Client creation time: {}", duration_nanos(Instant::now().duration_since(start)));
+    let res = core.run(client.get(Uri::from_str(site).unwrap())).unwrap();
+    assert!(res.status().is_success() || res.status() == StatusCode::Found);
 
-    let mut times = vec!();
-    for line in sites.lines(){
-        let l: Vec<String> = line.split(',').map(|s| s.to_string()).collect();
-        let mut site = "https://".to_owned();
-        site.push_str(l[0].trim());
-        //let expected = l[1].trim();
-
-        let start = Instant::now();
-        let res = core.run(client.get(Uri::from_str(&site).unwrap())).unwrap();
-        assert!(res.status().is_success() || res.status() == StatusCode::Found);
-
-        times.push(duration_nanos(Instant::now().duration_since(start)));
-    }
-    println!("{:?}", times);
+    duration_nanos(Instant::now().duration_since(start))
 
 }
 
 
 fn main() {
-	website_bench();
+
+	let mut file = match File::open(Path::new("./examples/sites.txt")) {
+        Err(_) => panic!("sites.txt not found"),
+        Ok(file) => file,
+    };
+    // can create a custom root-ca store (defaults to webpki)
+
+    let mut sites = String::new();
+    file.read_to_string(&mut sites).unwrap();
+
+    
+
+    let mut times: Vec<f64> = vec!();
+    for line in sites.lines() {
+    	//TODO fix sites.txt
+        let l: Vec<String> = line.split(',').map(|s| s.to_string()).collect();
+        let mut site = "https://".to_owned();
+        site.push_str(l[0].trim());
+
+        let mut site_time: Vec<f64> = vec!();
+        for _ in 0..10 {
+        	site_time.push(
+        		website_bench(&site));
+        }
+        let avg = site_time.iter().fold(0.0, |a, &b| a + b)/(site_time.len() as f64);
+        times.push(avg);
+    }
+
+    println!("Average times for connection (ns)");
+	println!("{:?}", times)
 }
